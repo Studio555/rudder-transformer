@@ -1,3 +1,4 @@
+const { sandboxBootstrap } = require('./integerPrecision');
 const ivm = require('isolated-vm');
 const { compileUserLibrary } = require('../util/ivmFactory');
 const { validateIp } = require('./utils');
@@ -27,6 +28,7 @@ async function runUserTransform(
   // TODO: Decide on the right value for memory limit
   const isolate = new ivm.Isolate({ memoryLimit: ISOLATE_VM_MEMORY });
   const context = await isolate.createContext();
+  if (sandboxBootstrap) await context.eval(sandboxBootstrap);
   const logs = [];
   const jail = context.global;
   // This make the global object available in the context as 'global'. We use 'derefInto()' here

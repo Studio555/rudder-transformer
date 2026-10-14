@@ -1,0 +1,111 @@
+name: Studio555 precision image
+
+on:
+  push:
+    branches: [studio555/v1.157.0]
+  pull_request:
+    branches: [studio555/v1.157.0]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: studio555-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.3
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit
+      - run: npm run prepare
+      - run: npm run build:ci
+      - name: Test precision and transformation regressions
+        run: >-
+          npm test -- --runTestsByPath src/util/integerPrecision.test.js
+          test/__tests__/user_transformation.test.js test/__tests__/eventValidation.test.js
+          --runInBand --no-coverage
+      - name: Check changed files
+        run: >-
+          npx eslint src/index.ts src/util/customTransformer.js src/util/ivmFactory.js
+          src/util/eventValidation.js src/util/integerPrecision.js src/util/integerPrecision.test.js
+          src/util/integerValidation.js src/util/installIntegerPrecision.js
+  image:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      LOCAL_IMAGE: rudder-transformer:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.LOCAL_IMAGE }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/Studio555/rudder-transformer
+            org.opencontainers.image.revision=${{ github.sha }}
+            io.studio555.upstream-base=v1.157.0
+          build-args: |
+            version=1.157.0-studio555
+            GIT_COMMIT_SHA=${{ github.sha }}
+          cache-from: type=gha,scope=studio555-rudder-transformer
+          cache-to: type=gha,mode=max,scope=studio555-rudder-transformer
+      - name: Smoke test runtime
+        run: docker run --rm --entrypoint node -e PRESERVE_INTEGER_PRECISION=true "$LOCAL_IMAGE" -e 'const p=require("./dist/src/util/integerPrecision");p.install();if(JSON.stringify(JSON.parse("9223372036854775807"))!=="9223372036854775807")process.exit(1)'
+      - run: docker save "$LOCAL_IMAGE" | gzip > tested-image.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tested-service-image
+          path: tested-image.tar.gz
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    needs: image
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/studio555/v1.157.0' &&
+      vars.GCP_IMAGE_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_IMAGE_PUBLISHER_SERVICE_ACCOUNT != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      LOCAL_IMAGE: rudder-transformer:${{ github.sha }}
+      REGISTRY_IMAGE: europe-north1-docker.pkg.dev/s555-devservices-shared/docker/rudder-transformer:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: tested-service-image
+      - run: docker load -i tested-image.tar.gz
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_IMAGE_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_IMAGE_PUBLISHER_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - run: gcloud auth configure-docker europe-north1-docker.pkg.dev --quiet
+      - run: docker tag "$LOCAL_IMAGE" "$REGISTRY_IMAGE"
+      - run: docker push "$REGISTRY_IMAGE"
+      - name: Record deployment digest
+        run: |
+          docker inspect "$REGISTRY_IMAGE" --format '{{json .RepoDigests}}' > deployment-digests.json
+          printf '%s\n' "$GITHUB_SHA" > source-commit.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deployment-image
+          path: |
+            deployment-digests.json
+            source-commit.txt
+          retention-days: 90
+          if-no-files-found: error

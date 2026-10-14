@@ -7,6 +7,7 @@ const addFormats = require('ajv-formats');
 
 const NodeCache = require('node-cache');
 const hash = require('object-hash');
+const { configureAjv, prepareSchema } = require('./integerValidation');
 const logger = require('../logger');
 const stats = require('./stats');
 const trackingPlan = require('./trackingPlan');
@@ -47,10 +48,10 @@ const supportedEventTypes = {
 };
 
 // When no ajv options are provided, ajv constructed from defaultOptions will be used
-const ajv4 = new Ajv(defaultOptions);
+const ajv4 = configureAjv(new Ajv(defaultOptions));
 addFormats(ajv4);
 
-const ajv19 = new Ajv2019(defaultOptions);
+const ajv19 = configureAjv(new Ajv2019(defaultOptions));
 addFormats(ajv19);
 ajv19.addMetaSchema(draft6MetaSchema);
 ajv19.addMetaSchema(draft7MetaSchema);
@@ -64,11 +65,11 @@ ajv19.addMetaSchema(draft7MetaSchema);
  */
 function getAjv(ajvOptions, isDraft4 = false) {
   if (isDraft4) {
-    const ajv = new Ajv(ajvOptions);
+    const ajv = configureAjv(new Ajv(ajvOptions));
     addFormats(ajv);
     return ajv;
   }
-  const ajv = new Ajv2019(ajvOptions);
+  const ajv = configureAjv(new Ajv2019(ajvOptions));
   ajv.addMetaSchema(draft6MetaSchema);
   ajv.addMetaSchema(draft7MetaSchema);
   addFormats(ajv);
@@ -196,9 +197,9 @@ async function validate(event) {
         // except the small _scope object kept alive by the compiled validator's closure.
         const ephemeralAjv = getAjv(merged, isDraft4);
         stats.timing('get_ajv_duration', compileStartTime, { isDraft4 });
-        validateEvent = ephemeralAjv.compile(eventSchema);
+        validateEvent = ephemeralAjv.compile(prepareSchema(eventSchema));
       } else {
-        validateEvent = ajv.compile(eventSchema);
+        validateEvent = ajv.compile(prepareSchema(eventSchema));
         ajv.removeSchema(eventSchema);
       }
       stats.timing('ajv_compile_duration', compileStartTime, { isDraft4, useEphemeralAjv });

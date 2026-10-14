@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import './util/installIntegerPrecision';
 import gracefulShutdown from 'http-graceful-shutdown';
 import Koa from 'koa';
 import bodyParser from 'koa-bodyparser';

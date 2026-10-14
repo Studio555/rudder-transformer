@@ -1,3 +1,4 @@
+const { sandboxBootstrap } = require('./integerPrecision');
 const ivm = require('isolated-vm');
 const { validateIp } = require('./utils');
 const fetch = require('node-fetch');
@@ -188,6 +189,7 @@ async function createIvm(
   `;
   const isolate = new ivm.Isolate({ memoryLimit: ISOLATE_VM_MEMORY });
   const context = await isolate.createContext();
+  if (sandboxBootstrap) await context.eval(sandboxBootstrap);
 
   const compiledModules = {};
 
@@ -476,6 +478,7 @@ async function createIvm(
 async function compileUserLibrary(code) {
   const isolate = new ivm.Isolate({ memoryLimit: ISOLATE_VM_MEMORY });
   const context = await isolate.createContext();
+  if (sandboxBootstrap) await context.eval(sandboxBootstrap);
   return evaluateModule(isolate, context, code);
 }
 
